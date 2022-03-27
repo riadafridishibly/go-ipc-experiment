@@ -133,7 +133,7 @@ func execute(enc *json.Encoder) {
 	go func() {
 		for {
 			data, err := getData(stdout, stderr)
-			// fmt.Println(data)
+			fmt.Println(data)
 			if err == io.EOF {
 				err = enc.Encode(&common.Data{
 					Msg: "END",
@@ -141,6 +141,7 @@ func execute(enc *json.Encoder) {
 
 				if err != nil {
 					log.Println(err)
+					cancel()
 
 					return
 				}
@@ -150,12 +151,14 @@ func execute(enc *json.Encoder) {
 
 			if err != nil {
 				log.Println(err)
+				cancel()
 
 				return
 			}
 
 			err = enc.Encode(data)
 			if err != nil {
+				cancel()
 				if errors.Is(err, syscall.EPIPE) {
 					log.Println("connection droped or probably closed by client")
 
@@ -171,7 +174,12 @@ func execute(enc *json.Encoder) {
 
 	err = cmd.Wait()
 	if err != nil {
-		log.Println(err)
+		// TODO: if error is (signal: killed) then probably it's killed by cancel
+		//  What could be possible error!
+		if errors.Is(ctx.Err(), context.Canceled) {
+			log.Println("cmd killed by context")
+		}
+		log.Println("cmd", err)
 	}
 }
 
@@ -182,5 +190,7 @@ func handleClient(conn net.Conn) {
 
 	// 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
+	log.Println("execution started...")
 	execute(encoder)
+	log.Println("execution finished...")
 }
