@@ -130,23 +130,21 @@ func execute(enc *json.Encoder) {
 		return
 	}
 
+	cmdDone := make(chan bool)
+
 	go func() {
 		for {
 			data, err := getData(stdout, stderr)
 			fmt.Println(data)
 			if err == io.EOF {
-				err = enc.Encode(&common.Data{
-					Msg: "END",
-				})
-
-				if err != nil {
-					log.Println(err)
-					cancel()
-
+				log.Println("eof found")
+				// Only finish reading loop when command is done
+				select {
+				case <-cmdDone:
+					log.Println("command done")
 					return
+				default:
 				}
-
-				break
 			}
 
 			if err != nil {
@@ -161,11 +159,9 @@ func execute(enc *json.Encoder) {
 				cancel()
 				if errors.Is(err, syscall.EPIPE) {
 					log.Println("connection droped or probably closed by client")
-
-					return
+				} else {
+					log.Println(err)
 				}
-
-				log.Println(err)
 
 				return
 			}
@@ -181,6 +177,8 @@ func execute(enc *json.Encoder) {
 		}
 		log.Println("cmd", err)
 	}
+
+	cmdDone <- true
 }
 
 func handleClient(conn net.Conn) {
@@ -192,5 +190,6 @@ func handleClient(conn net.Conn) {
 	encoder := json.NewEncoder(conn)
 	log.Println("execution started...")
 	execute(encoder)
+	encoder.Encode(&common.Data{Msg: "END"})
 	log.Println("execution finished...")
 }
