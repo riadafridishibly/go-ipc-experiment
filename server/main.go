@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"ipc-unix/common"
@@ -12,9 +14,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"syscall"
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	cleanup := func() {
 		if _, err := os.Stat(common.SocketPath); err == nil {
 			if err := os.RemoveAll(common.SocketPath); err != nil {
@@ -23,7 +28,7 @@ func main() {
 		}
 	}
 
-	// cleanup()
+	cleanup()
 	cert, err := tls.LoadX509KeyPair("certs/server.pem", "certs/server.key")
 	if err != nil {
 		log.Fatalf("server: loadkeys: %s", err)
@@ -100,60 +105,82 @@ func getData(stdout, stderr io.Reader) (*common.Data, error) {
 	return data, nil
 }
 
-func execute(enc *json.Encoder) error {
-	cmd := exec.Command("./counter/counter")
+func execute(enc *json.Encoder) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "./counter/counter")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return enc.Encode(&common.Data{Msg: err.Error()})
+		log.Println(err)
+
+		return
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return enc.Encode(&common.Data{Msg: err.Error()})
-	}
+		log.Println(err)
 
-	// mr := io.MultiReader(stdout, stderr)
+		return
+	}
 
 	err = cmd.Start()
 	if err != nil {
-		panic("start failed")
+		log.Println(err)
+
+		return
 	}
 
 	go func() {
 		for {
 			data, err := getData(stdout, stderr)
-			fmt.Println(data)
+			// fmt.Println(data)
 			if err == io.EOF {
-				enc.Encode(&common.Data{
+				err = enc.Encode(&common.Data{
 					Msg: "END",
 				})
+
+				if err != nil {
+					log.Println(err)
+
+					return
+				}
 
 				break
 			}
 
 			if err != nil {
-				panic(err.Error())
+				log.Println(err)
+
+				return
 			}
 
-			enc.Encode(data)
+			err = enc.Encode(data)
+			if err != nil {
+				if errors.Is(err, syscall.EPIPE) {
+					log.Println("connection droped or probably closed by client")
+
+					return
+				}
+
+				log.Println(err)
+
+				return
+			}
 		}
 	}()
 
 	err = cmd.Wait()
 	if err != nil {
-		panic("wait failed")
+		log.Println(err)
 	}
-
-	return nil
 }
 
 func handleClient(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		conn.Close()
+	}()
 
 	// 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
-	err := execute(encoder)
-	if err != nil {
-		panic(err)
-	}
+	execute(encoder)
 }
