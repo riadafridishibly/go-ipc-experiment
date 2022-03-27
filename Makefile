@@ -8,8 +8,8 @@ build-counter:
 
 .PHONY: run-server makecert
 run-server: build-counter
-	go run server/main.go
+	go run -race server/main.go
 
 .PHONY: run-client
 run-client:
-	go run client/main.go
+	go run -race client/main.go
