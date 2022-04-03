@@ -14,13 +14,13 @@ func init() {
 }
 
 type clientHandler struct {
-	c context.CancelFunc
+	cancel context.CancelFunc
 }
 
 func (h *clientHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	defer func() {
 		if req.Method == "done" {
-			h.c()
+			h.cancel()
 		}
 	}()
 
@@ -38,12 +38,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx2, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	ctx := context.Background()
 	ch := clientHandler{cancel}
 	cc := jsonrpc2.NewConn(ctx, jsonrpc2.NewBufferedStream(conn, jsonrpc2.VarintObjectCodec{}), &ch)
 	go func() {
-		<-ctx2.Done()
+		<-timeoutCtx.Done()
 		if err := cc.Close(); err != nil {
 			log.Fatal(err)
 		}
